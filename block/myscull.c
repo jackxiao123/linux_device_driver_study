@@ -7,6 +7,8 @@
 #include <asm/uaccess.h>
 #include <linux/slab.h>
 #include "myscull.h"
+#include <linux/wait.h>
+#include <linux/sched.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("jackx");
@@ -18,6 +20,8 @@ struct myscull_dev
     char* buf;
     int size;
     int capacity;
+    wait_queue_head_t qread;
+    wait_queue_head_t qwrite;
 } chardev1;
 
 static int myscull_open(struct inode *inodp, struct file *filp)
@@ -36,12 +40,31 @@ static ssize_t myscull_read(struct file *filp, char __user *pbuf, size_t count, 
     count = (*f_pos + count < pmydev->size) ? count : (pmydev->size - *f_pos);
     if (count > 0)
     {
+        while (pmydev->size == 0)
+        {
+            //if (wait_event(pmydev->qread, pmydev->size != 0))
+            if (wait_event_interruptible(pmydev->qread, pmydev->size != 0))
+            {
+                printk(KERN_INFO "myscull_read wait_event_interruptible wrong\n");
+                return -ERESTARTSYS;
+            }
+        }
+        
         if (copy_to_user(pbuf, pmydev->buf + *f_pos, count) != 0)
         {
             printk(KERN_ALERT "myscull_read: copy error!\n");
             return 0;
         }
-        *f_pos += count;
+
+        pmydev->size -= count;
+        int i = 0;
+        for (i = 0; i < pmydev->size; i++)
+        {
+            pmydev->buf[i] = pmydev->buf[count + i];
+        }
+        //wake_up(&pmydev->qwrite);
+        wake_up_interruptible(&pmydev->qwrite);
+        printk(KERN_INFO "myscull_read: after read, size = %d\n", pmydev->size);
     }
     printk(KERN_INFO "myscull_read: leave count = %d, f_pos is %ld, filp->f_pos is %ld\n", count, *f_pos, filp->f_pos);
     return count;
@@ -57,15 +80,27 @@ static ssize_t myscull_write(struct file *filp, const char __user *pbuf, size_t 
     ssize_t result = -ENOMEM;
     if (length > 0)
     {
+        while (pmydev->size == pmydev->capacity)
+        {
+            //if (wait_event(pmydev->qwrite, pmydev->size != pmydev->capacity))
+            if (wait_event_interruptible(pmydev->qwrite, pmydev->size != pmydev->capacity))
+            {
+                printk(KERN_INFO "myscull_write wait_event_interruptible wrong\n");
+                return -ERESTARTSYS;
+            }
+        }
+
         if (copy_from_user(pmydev->buf, pbuf, length) != 0)
         {
             printk(KERN_ALERT "myscull_write: copy error!\n");
             return -EFAULT;
         }
         *f_pos += length;
-        pmydev->size = length;
+        pmydev->size += length;
         result = length;
-        printk(KERN_INFO "myscull_write: leave size = %ld, f_pos =%ld, filp->f_pos = %ld\n", pmydev->size, *f_pos, filp->f_pos);
+        printk(KERN_INFO "myscull_write: after write size = %ld, f_pos =%ld, filp->f_pos = %ld\n", pmydev->size, *f_pos, filp->f_pos);
+        //wake_up(&pmydev->qread);
+        wake_up_interruptible(&pmydev->qread);
     }
     return count;
 }
@@ -115,7 +150,7 @@ struct file_operations myscull_ops = {
     .read = myscull_read,
     .write = myscull_write,
     .open = myscull_open,
-//    .llseek = myscull_seek,
+    .llseek = myscull_seek,
     .unlocked_ioctl = myscull_ioctl,
 };
 
@@ -136,6 +171,9 @@ static int myscull_init(void)
     chardev1.size = 0;
     chardev1.capacity = 4; 
     chardev1.buf = kmalloc(chardev1.capacity, GFP_KERNEL);
+    init_waitqueue_head(&chardev1.qread);
+    init_waitqueue_head(&chardev1.qwrite);
+
     ret = cdev_add(&chardev1.my_cdev, myscull_dev_no, 1);
     if (ret)
     {
