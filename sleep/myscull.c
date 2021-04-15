@@ -29,7 +29,7 @@ static int myscull_open(struct inode *inodp, struct file *filp)
     struct cdev* pcdev = inodp->i_cdev;
     struct myscull_dev* pmydev = container_of(pcdev, struct myscull_dev, my_cdev);
     filp->private_data = pmydev;
-    printk(KERN_INFO "myscull_open: capacity=%d, size=%d, f_pos=%ld\n", pmydev->capacity, pmydev->size, filp->f_pos);
+    printk(KERN_INFO "myscull_open: capacity=%d, size=%d\n", pmydev->capacity, pmydev->size);
     return 0;
 }
 
@@ -37,15 +37,15 @@ static ssize_t myscull_read(struct file *filp, char __user *pbuf, size_t count, 
 {
     struct myscull_dev* pmydev = (struct myscull_dev*)(filp->private_data);
     pmydev->task_read = current;
-    printk(KERN_INFO "myscull_read: enter count is %ld, size = %d, f_pos is %ld, filp->f_pos is %ld\n", count, pmydev->size, *f_pos, filp->f_pos);
+    printk(KERN_INFO "myscull_read: count is %ld, size = %d\n", count, pmydev->size);
     count = (*f_pos + count < pmydev->capacity) ? count : (pmydev->capacity - *f_pos);
     if (count > 0)
     {
-        set_current_state(TASK_INTERRUPTIBLE);
         while (pmydev->size == 0)
         {
-            schedule();
             set_current_state(TASK_INTERRUPTIBLE);
+            printk(KERN_INFO "read process is sleeping %p\n", current);
+            schedule();
         }
         set_current_state(TASK_RUNNING);
         
@@ -61,10 +61,10 @@ static ssize_t myscull_read(struct file *filp, char __user *pbuf, size_t count, 
         {
             pmydev->buf[i] = pmydev->buf[count + i];
         }
+        printk(KERN_INFO "waking write process up %p\n", pmydev->task_write);
         wake_up_process(pmydev->task_write);
         printk(KERN_INFO "myscull_read: after read, size = %d\n", pmydev->size);
     }
-    printk(KERN_INFO "myscull_read: leave count = %d, f_pos is %ld, filp->f_pos is %ld\n", count, *f_pos, filp->f_pos);
     return count;
 }
 
@@ -72,8 +72,8 @@ static ssize_t myscull_write(struct file *filp, const char __user *pbuf, size_t 
 {
     struct myscull_dev* pmydev = (struct myscull_dev*)(filp->private_data);
     pmydev->task_write = current;
-    printk(KERN_INFO "myscull_write: enter capacity = %d, size = %ld, f_pos =%ld, filp->f_pos = %ld, count = %ld\n", 
-        pmydev->capacity, pmydev->size, *f_pos, filp->f_pos, count);
+    printk(KERN_INFO "myscull_write: capacity = %d, size = %ld, count = %ld\n", 
+        pmydev->capacity, pmydev->size, count);
 
     ssize_t length = (*f_pos + count < pmydev->capacity) ? count : (pmydev->capacity - *f_pos);
     ssize_t result = -ENOMEM;
@@ -82,13 +82,10 @@ static ssize_t myscull_write(struct file *filp, const char __user *pbuf, size_t 
         while (pmydev->size == pmydev->capacity)
         {
             set_current_state(TASK_INTERRUPTIBLE);
-            while (pmydev->size != pmydev->capacity)
-            {
-                schedule();
-                set_current_state(TASK_INTERRUPTIBLE);
-            }
-            set_current_state(TASK_RUNNING);
+            printk(KERN_INFO "write process is sleeping %p\n", current);
+            schedule();
         }
+        set_current_state(TASK_RUNNING);
 
         if (copy_from_user(pmydev->buf, pbuf, length) != 0)
         {
@@ -98,8 +95,9 @@ static ssize_t myscull_write(struct file *filp, const char __user *pbuf, size_t 
         *f_pos += length;
         pmydev->size += length;
         result = length;
-        printk(KERN_INFO "myscull_write: after write size = %ld, f_pos =%ld, filp->f_pos = %ld\n", pmydev->size, *f_pos, filp->f_pos);
+        printk(KERN_INFO "wake read process up %p\n", pmydev->task_read);
         wake_up_process(pmydev->task_read);
+        printk(KERN_INFO "myscull_write: after write size = %ld\n", pmydev->size);
     }
     return count;
 }
