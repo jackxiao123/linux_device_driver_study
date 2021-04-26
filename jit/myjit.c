@@ -19,6 +19,7 @@
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/sched.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("jackx");
@@ -87,6 +88,28 @@ static struct file_operations mypos_busy =
     .release = single_release,
 };
 
+static int myjit_schedule(struct seq_file *m, void *v)
+{
+    seq_printf(m, "before schedule 10s:%ld\n", jiffies);
+    unsigned long j1 = jiffies + 10000;
+    while (time_before(jiffies, j1)) schedule();
+    seq_printf(m, "after schedule 10s:%ld\n", jiffies);
+    return 0;
+}
+
+static int myjit_schedule_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, myjit_schedule, NULL);
+}
+
+static struct file_operations mypos_schedule =
+{
+    .owner = THIS_MODULE,
+    .open = myjit_schedule_open,
+    .read = seq_read,
+    .release = single_release,
+};
+
 static struct proc_dir_entry * parent = NULL;
 
 static int hello_init(void)
@@ -96,6 +119,7 @@ static int hello_init(void)
     parent = proc_mkdir("myjit", NULL);
     proc_create("currentime", 0, parent, &mypos_current_time);
     proc_create("busy", 0, parent, &mypos_busy);
+    proc_create("sched", 0, parent, &mypos_schedule);
 
     return 0;
 }
@@ -104,6 +128,7 @@ static void hello_exit(void)
 {
     remove_proc_entry("currentime", parent);
     remove_proc_entry("busy", parent);
+    remove_proc_entry("sched", parent);
     proc_remove(parent);
     printk(KERN_ALERT "Goodbye, cruel world - just in time\n");
 }
