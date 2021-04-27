@@ -115,9 +115,11 @@ static struct file_operations mypos_schedule =
 static int myjit_queue(struct seq_file *m, void *v)
 {
     seq_printf(m, "before queue 10s:%ld\n", jiffies);
-    wait_queue_head_t wait;
-    init_waitqueue_head(&wait);
-    wait_event_interruptible_timeout(wait, 0, HZ * 10);
+    //wait_queue_head_t wait;
+    //init_waitqueue_head(&wait);
+    //wait_event_interruptible_timeout(wait, 0, HZ * 10);
+    set_current_state(TASK_INTERRUPTIBLE);
+    schedule_timeout(HZ*10);
     seq_printf(m, "after queue 10s:%ld\n", jiffies);
     return 0;
 }
