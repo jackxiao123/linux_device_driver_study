@@ -20,6 +20,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/sched.h>
+#include <linux/wait.h>
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("jackx");
@@ -68,8 +69,9 @@ static struct file_operations mypos_current_time =
 
 static int myjit_busy(struct seq_file *m, void *v)
 {
+    unsigned long j1 = 0;
     seq_printf(m, "before busy 10s:%ld\n", jiffies);
-    unsigned long j1 = jiffies + 10000;
+    j1 = jiffies + 10000;
     while (time_before(jiffies, j1)) cpu_relax();
     seq_printf(m, "after busy 10s:%ld\n", jiffies);
     return 0;
@@ -110,6 +112,29 @@ static struct file_operations mypos_schedule =
     .release = single_release,
 };
 
+static int myjit_queue(struct seq_file *m, void *v)
+{
+    seq_printf(m, "before queue 10s:%ld\n", jiffies);
+    wait_queue_head_t wait;
+    init_waitqueue_head(&wait);
+    wait_event_interruptible_timeout(wait, 0, HZ * 10);
+    seq_printf(m, "after queue 10s:%ld\n", jiffies);
+    return 0;
+}
+
+static int myjit_queue_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, myjit_queue, NULL);
+}
+
+static struct file_operations mypos_queue =
+{
+    .owner = THIS_MODULE,
+    .open = myjit_queue_open,
+    .read = seq_read,
+    .release = single_release,
+};
+
 static struct proc_dir_entry * parent = NULL;
 
 static int hello_init(void)
@@ -120,6 +145,7 @@ static int hello_init(void)
     proc_create("currentime", 0, parent, &mypos_current_time);
     proc_create("busy", 0, parent, &mypos_busy);
     proc_create("sched", 0, parent, &mypos_schedule);
+    proc_create("queue", 0, parent, &mypos_queue);
 
     return 0;
 }
@@ -129,6 +155,7 @@ static void hello_exit(void)
     remove_proc_entry("currentime", parent);
     remove_proc_entry("busy", parent);
     remove_proc_entry("sched", parent);
+    remove_proc_entry("queue", parent);
     proc_remove(parent);
     printk(KERN_ALERT "Goodbye, cruel world - just in time\n");
 }
