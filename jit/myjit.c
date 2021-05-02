@@ -70,7 +70,7 @@ static struct file_operations mypos_current_time =
 static int myjit_busy(struct seq_file *m, void *v)
 {
     unsigned long j1 = 0;
-    seq_printf(m, "before busy 10s:%ld\n", jiffies);
+    seq_printf(m, "before busy 10s:%ld cpu is %d\n", jiffies, smp_processor_id());
     j1 = jiffies + 10000;
     while (time_before(jiffies, j1)) cpu_relax();
     seq_printf(m, "after busy 10s:%ld\n", jiffies);
@@ -137,8 +137,8 @@ static struct file_operations mypos_queue =
     .release = single_release,
 };
 
-#define JIT_ASYNC_LOOPS 20
-#define JIT_DELAY 10
+#define JIT_ASYNC_LOOPS 20 
+#define JIT_DELAY 1000
 
 static struct jitimer_data
 {
@@ -153,7 +153,6 @@ struct jitimer_data mydata;
 
 static void jit_timer_fn(struct timer_list *t)
 {
-    printk("jit_timer_fn\n");
     struct jitimer_data *data = container_of(t, struct jitimer_data, t); 
     unsigned long now = jiffies;
 
