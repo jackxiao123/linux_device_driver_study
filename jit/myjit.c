@@ -137,6 +137,87 @@ static struct file_operations mypos_queue =
     .release = single_release,
 };
 
+#define JIT_ASYNC_LOOPS 20
+#define JIT_DELAY 10
+
+static struct jitimer_data
+{
+    unsigned long prev_jiffies;
+    struct seq_file *m;
+    struct timer_list t;
+    wait_queue_head_t qwait;
+    int count;
+};
+
+struct jitimer_data mydata;
+
+static void jit_timer_fn(struct timer_list *t)
+{
+    printk("jit_timer_fn\n");
+    struct jitimer_data *data = container_of(t, struct jitimer_data, t); 
+    unsigned long now = jiffies;
+
+    seq_printf(data->m, "%10ld %6d %6ld %9d %9d %3d %-30s\n",
+        now, (long)(now - data->prev_jiffies), in_interrupt(), in_atomic(), task_pid_nr(current), smp_processor_id(), current->comm);
+    data->count--;
+    if (data->count > 0)
+    {
+        data->prev_jiffies = now;
+        mod_timer(&data->t, now + JIT_DELAY);
+    }
+    else
+    {
+        wake_up_interruptible(&data->qwait);
+    }
+}
+
+static int myjit_timer(struct seq_file *m, void *v)
+{
+    int ret;
+    unsigned long now = jiffies;
+   
+    timer_setup(&mydata.t, jit_timer_fn, 0);
+    mydata.t.expires = now + JIT_DELAY;
+    mydata.prev_jiffies = now;
+    mydata.m = m;
+    mydata.count = JIT_ASYNC_LOOPS;
+
+    seq_printf(m, "%10s %6s %6s %9s %9s %3s %-30s\n",
+        "time", "delta", "inirq", "inatomic", "pid", "cpu", "cmd");
+    seq_printf(m, "%10ld %6d %6ld %9d %9d %3d %-30s\n",
+        now, 0, in_interrupt(), in_atomic(), task_pid_nr(current), smp_processor_id(), current->comm);
+
+    add_timer(&mydata.t);
+
+    while (mydata.count > 0)
+    {
+        if (wait_event_interruptible(mydata.qwait, mydata.count == 0))
+        {
+            printk("myjit wait_event_interruptible fail\n");
+            ret = -ERESTARTSYS;
+            goto cleanup;
+        }
+    }
+    ret = 0;
+cleanup:
+   mydata.count = 0;
+    del_timer_sync(&mydata.t);
+    return ret;
+}
+
+static int myjit_timer_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, myjit_timer, NULL);
+}
+
+static struct file_operations mypos_timer =
+{
+    .owner = THIS_MODULE,
+    .open = myjit_timer_open,
+    .read = seq_read,
+    .release = single_release,
+};
+
 static struct proc_dir_entry * parent = NULL;
 
 static int hello_init(void)
@@ -148,6 +229,9 @@ static int hello_init(void)
     proc_create("busy", 0, parent, &mypos_busy);
     proc_create("sched", 0, parent, &mypos_schedule);
     proc_create("queue", 0, parent, &mypos_queue);
+    proc_create("timer", 0, parent, &mypos_timer);
+
+    init_waitqueue_head(&mydata.qwait);
 
     return 0;
 }
@@ -158,6 +242,7 @@ static void hello_exit(void)
     remove_proc_entry("busy", parent);
     remove_proc_entry("sched", parent);
     remove_proc_entry("queue", parent);
+    remove_proc_entry("timer", parent);
     proc_remove(parent);
     printk(KERN_ALERT "Goodbye, cruel world - just in time\n");
 }
