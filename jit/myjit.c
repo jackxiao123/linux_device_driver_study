@@ -95,10 +95,10 @@ static struct file_operations mypos_busy =
 static int myjit_schedule(struct seq_file *m, void *v)
 {
     unsigned long j1;
-    seq_printf(m, "before schedule 10s:%ld\n", jiffies);
-    j1 = jiffies + 10000;
+    seq_printf(m, "before schedule 3s:%ld\n", jiffies);
+    j1 = jiffies + 3000;
     while (time_before(jiffies, j1)) schedule();
-    seq_printf(m, "after schedule 10s:%ld\n", jiffies);
+    seq_printf(m, "after schedule 3s:%ld\n", jiffies);
     return 0;
 }
 
@@ -115,27 +115,27 @@ static struct file_operations mypos_schedule =
     .release = single_release,
 };
 
-static int myjit_queue(struct seq_file *m, void *v)
+static int myjit_timeout(struct seq_file *m, void *v)
 {
-    seq_printf(m, "before queue 10s:%ld\n", jiffies);
+    seq_printf(m, "before timeout 3s:%ld\n", jiffies);
     //wait_queue_head_t wait;
     //init_waitqueue_head(&wait);
     //wait_event_interruptible_timeout(wait, 0, HZ * 10);
     set_current_state(TASK_INTERRUPTIBLE);
-    schedule_timeout(HZ*10);
-    seq_printf(m, "after queue 10s:%ld\n", jiffies);
+    schedule_timeout(HZ*3);
+    seq_printf(m, "after timeout 3s:%ld\n", jiffies);
     return 0;
 }
 
-static int myjit_queue_open(struct inode *inode, struct file *filp)
+static int myjit_timeout_open(struct inode *inode, struct file *filp)
 {
-    return single_open(filp, myjit_queue, NULL);
+    return single_open(filp, myjit_timeout, NULL);
 }
 
-static struct file_operations mypos_queue =
+static struct file_operations mypos_timeout =
 {
     .owner = THIS_MODULE,
-    .open = myjit_queue_open,
+    .open = myjit_timeout_open,
     .read = seq_read,
     .release = single_release,
 };
@@ -297,6 +297,87 @@ static struct file_operations mypos_tasklet =
     .read = seq_read,
     .release = single_release,
 };
+
+struct jitworkqueue_data
+{
+    unsigned long prev_jiffies;
+    struct seq_file *m;
+    struct workqueue_struct *wq;
+    struct work_struct work;
+    wait_queue_head_t qwait;
+    int count;
+};
+
+static struct jitworkqueue_data my_workqueue_data;
+
+static void jit_workqueue_fn(struct work_struct *w)
+{
+    struct jitworkqueue_data *data = container_of(w, struct jitworkqueue_data, work); 
+    unsigned long now = jiffies;
+
+    seq_printf(data->m, "%10ld %6ld %6ld %9d %9d %3d %-30s\n",
+        now, (long)(now - data->prev_jiffies), in_interrupt(), in_atomic(), task_pid_nr(current), smp_processor_id(), current->comm);
+    data->count--;
+    if (data->count > 0)
+    {
+        data->prev_jiffies = now;
+        queue_work(data->wq, &data->work);
+    }
+    else
+    {
+        wake_up_interruptible(&data->qwait);
+    }
+}
+
+static int myjit_workqueue(struct seq_file *m, void *v)
+{
+    int ret;
+    unsigned long now = jiffies;
+   
+    INIT_WORK(&my_workqueue_data.work, jit_workqueue_fn);
+    my_workqueue_data.prev_jiffies = now;
+    my_workqueue_data.m = m;
+    my_workqueue_data.count = JIT_ASYNC_LOOPS;
+
+    seq_printf(m, "%10s %6s %6s %9s %9s %3s %-30s\n",
+        "time", "delta", "inirq", "inatomic", "pid", "cpu", "cmd");
+    seq_printf(m, "%10ld %6d %6ld %9d %9d %3d %-30s\n",
+        now, 0, in_interrupt(), in_atomic(), task_pid_nr(current), smp_processor_id(), current->comm);
+
+    queue_work(my_workqueue_data.wq, &my_workqueue_data.work);
+
+    while (my_workqueue_data.count > 0)
+    {
+        if (wait_event_interruptible(my_workqueue_data.qwait, my_workqueue_data.count == 0))
+        {
+            printk("myjit_workqueue wait_event_interruptible fail\n");
+            ret = -ERESTARTSYS;
+            goto cleanup;
+        }
+    }
+    ret = 0;
+cleanup:
+    my_workqueue_data.count = 0;
+    if (!cancel_work_sync(&my_workqueue_data.work))
+    {
+        flush_work(&my_workqueue_data.work);
+    }
+    return ret;
+}
+
+static int myjit_workqueue_open(struct inode *inode, struct file *filp)
+{
+    return single_open(filp, myjit_workqueue, NULL);
+}
+
+static struct file_operations mypos_workqueue =
+{
+    .owner = THIS_MODULE,
+    .open = myjit_workqueue_open,
+    .read = seq_read,
+    .release = single_release,
+};
+
 static struct proc_dir_entry * parent = NULL;
 
 static int hello_init(void)
@@ -307,23 +388,34 @@ static int hello_init(void)
     proc_create("currentime", 0, parent, &mypos_current_time);
     proc_create("busy", 0, parent, &mypos_busy);
     proc_create("sched", 0, parent, &mypos_schedule);
-    proc_create("queue", 0, parent, &mypos_queue);
+    proc_create("timeout", 0, parent, &mypos_timeout);
     proc_create("timer", 0, parent, &mypos_timer);
     proc_create("tasklet", 0, parent, &mypos_tasklet);
+    proc_create("workqueue", 0, parent, &mypos_workqueue);
+
+    my_workqueue_data.wq = create_singlethread_workqueue("myjit_wq"); 
 
     init_waitqueue_head(&my_timer_data.qwait);
     init_waitqueue_head(&my_tasklet_data.qwait);
+    init_waitqueue_head(&my_workqueue_data.qwait);
 
     return 0;
 }
 
 static void hello_exit(void)
 {
+    if (my_workqueue_data.wq) 
+    {
+        destroy_workqueue(my_workqueue_data.wq);
+    }
+
     remove_proc_entry("currentime", parent);
     remove_proc_entry("busy", parent);
     remove_proc_entry("sched", parent);
-    remove_proc_entry("queue", parent);
+    remove_proc_entry("timeout", parent);
     remove_proc_entry("timer", parent);
+    remove_proc_entry("tasklet", parent);
+    remove_proc_entry("workqueue", parent);
     proc_remove(parent);
     printk(KERN_ALERT "Goodbye, cruel world - just in time\n");
 }
