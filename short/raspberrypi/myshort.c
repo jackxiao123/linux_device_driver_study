@@ -22,8 +22,10 @@ static int myshort_open(struct inode *inodp, struct file *filp)
 {
     printk(KERN_INFO "myshort_open\n");
 
-    *GPFSEL0 &= ~(0x6 << 12);
-    *GPFSEL0 |= (0x1 << 12);
+    //*GPFSEL0 &= ~(0x6 << 12);
+    //*GPFSEL0 |= (0x1 << 12);
+    unsigned int orig_value = ioread32(GPFSEL0);
+    iowrite32(orig_value & ~ (0x6 << 12) | (0x1 << 12), GPFSEL0);
 
     return 0;
 }
@@ -50,12 +52,14 @@ static ssize_t myshort_write(struct file *filp, const char __user *pbuf, size_t 
 	if (kbuf[0] == '1')
 	{
 	    printk (KERN_INFO "write 1\n");
-	    *GPSET0 |= 0x1 << 4;
+	    //*GPSET0 |= 0x1 << 4;
+	    iowrite32(ioread32(GPSET0) | (0x1 << 4), GPSET0);
 	}
 	else if (kbuf[0] == '0')
 	{
             printk (KERN_INFO "write 0\n");
-	    *GPCLR0 |= 0x1 << 4;
+	    //*GPCLR0 |= 0x1 << 4;
+	    iowrite32(ioread32(GPCLR0) | (0x1 << 4), GPCLR0);
 	}
 	else
 	{
