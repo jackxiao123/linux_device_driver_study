@@ -26,8 +26,12 @@ int main(int argc, char** argv)
     }
 
     volatile unsigned int* GPFSEL0 = gpio;
+    // set pin 4 as output
     *GPFSEL0 &= ~(0x6 << 12);
     *GPFSEL0 |= (0x1 << 12);
+    // set pin 5 as output
+    *GPFSEL0 &= ~(0x6 << 15);
+    *GPFSEL0 |= (0x1 << 15);
 
     volatile unsigned int* GPSET0 = gpio + 7; 
     volatile unsigned int* GPCLR0 = gpio + 10; 
@@ -38,10 +42,12 @@ int main(int argc, char** argv)
 	if (count % 2)    
 	{
             *GPSET0 |= 0x1 << 4; 		
+            *GPSET0 |= 0x1 << 5; 		
 	}
 	else
 	{
             *GPCLR0 |= 0x1 << 4;		
+            *GPCLR0 |= 0x1 << 5;		
 	}
 	sleep(1);
 	count --;
