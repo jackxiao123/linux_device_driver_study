@@ -15,6 +15,7 @@ MODULE_AUTHOR("jackx");
 MODULE_DESCRIPTION("A simple short module");
 
 volatile unsigned int* GPFSEL0 = NULL;
+volatile unsigned int* GPFSEL1 = NULL;
 volatile unsigned int* GPSET0 = NULL;
 volatile unsigned int* GPCLR0 = NULL;
 
@@ -24,7 +25,6 @@ int flag = 0;
 
 static void set_pin_4(bool enable)
 {
-    iowrite32((0x1 << 12), GPFSEL0);
     if (enable)
     {
 	iowrite32((0x1 << 4), GPSET0);
@@ -35,13 +35,21 @@ static void set_pin_4(bool enable)
     }
 }
 
+static void set_pin_18(bool enable)
+{
+    if (enable)
+    {
+	iowrite32( (0x1 << 18), GPSET0);
+    }
+    else
+    {
+	iowrite32( (0x1 << 18), GPCLR0);
+    }
+}
+
 static int myshort_open(struct inode *inodp, struct file *filp)
 {
     printk(KERN_INFO "myshort_open\n");
-
-    //*GPFSEL0 &= ~(0x6 << 12);
-    //*GPFSEL0 |= (0x1 << 12);
-//    iowrite32(ioread32(GPFSEL0) & ~ (0x6 << 12) | (0x1 << 12), GPFSEL0);
 
     return 0;
 }
@@ -96,8 +104,18 @@ dev_t myshort_dev_no;
 
 static irqreturn_t irq_handler(int irq, void *dev)
 {
-    //trace_printk(KERN_INFO "irq=%d\n", irq);	
+    static int count = 0;	 
     printk(KERN_INFO "xxxxxxxxxxxxxxxxxxxxxxxxx irq=%d\n", irq);	
+
+    if (count % 2)
+    {
+        set_pin_18(true);
+    }
+    else
+    {
+	set_pin_18(false);
+    }
+    count++;
     return IRQ_HANDLED;	
 }
 
@@ -123,15 +141,25 @@ static int myshort_init(void)
 
     GPFSEL0 = (volatile unsigned int *)ioremap(0x3f200000, 4);
     printk(KERN_INFO "GPFSEL0 is %p\n", GPFSEL0);
+    GPFSEL1 = (volatile unsigned int *)ioremap(0x3f200004, 4);
+    printk(KERN_INFO "GPFSEL1 is %p\n", GPFSEL1);
     GPSET0 = (volatile unsigned int *)ioremap(0x3f20001c, 4);
     printk(KERN_INFO "GPSET0 is %p\n", GPSET0);
     GPCLR0 = (volatile unsigned int *)ioremap(0x3f200028, 4);
     printk(KERN_INFO "GPCLR0 is %p\n", GPCLR0);
 
-    ret = gpio_request_one(4, GPIOF_IN, "led");
 
+    // select pin 4 as output
+    unsigned int orig_value = ioread32(GPFSEL0);
+    iowrite32((orig_value & ~ (0x7 << 12)) | (0x1 << 12), GPFSEL0);
+
+    // select pin 18 as output 
+    orig_value = ioread32(GPFSEL1);
+    iowrite32((orig_value & ~ (0x7 << 24)) | (0x1 << 24), GPFSEL1);
+    //printk(KERN_INFO "read gpfsel1 =0x%x\n", *GPFSEL1);
+    
     enable_irq(gpio_to_irq(4));
-    ret = request_irq(gpio_to_irq(4), irq_handler, IRQF_TRIGGER_FALLING, "led", NULL);
+    ret = request_irq(gpio_to_irq(4), irq_handler, IRQF_TRIGGER_FALLING, "trigger", NULL);
     if (ret < 0)
     {
 	printk(KERN_ALERT "irq_request failure.\n");
@@ -152,7 +180,7 @@ static void myshort_exit(void)
 	free_irq(gpio_to_irq(4), NULL);
         disable_irq(gpio_to_irq(4));
 	gpio_free(4);
-	//flag = 0;
+	flag = 0;
     }
     
     iounmap(GPFSEL0);

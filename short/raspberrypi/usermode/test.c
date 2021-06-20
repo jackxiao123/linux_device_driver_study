@@ -8,6 +8,19 @@
 int main(int argc, char** argv)
 {
     int fd = 0;
+
+    int sleep_us = 500000;
+    int count = 100;
+    
+    if (argc > 1)
+    {
+        sleep_us = atoi(argv[1]);	    
+    }
+    if (argc > 2)
+    {
+	count = atoi(argv[2]);     
+    }
+
     if ((fd = open("/dev/mem", O_RDWR | O_SYNC)) < 0)
     {
 	printf("Can't open /dev/mem: %d\n", errno);
@@ -36,7 +49,6 @@ int main(int argc, char** argv)
     volatile unsigned int* GPSET0 = gpio + 7; 
     volatile unsigned int* GPCLR0 = gpio + 10; 
 
-    int count = 10;
     while (count)
     {
 	if (count % 2)    
@@ -49,7 +61,7 @@ int main(int argc, char** argv)
             *GPCLR0 |= 0x1 << 4;		
             *GPCLR0 |= 0x1 << 5;		
 	}
-	sleep(1);
+	usleep(sleep_us);
 	count --;
     }
 
